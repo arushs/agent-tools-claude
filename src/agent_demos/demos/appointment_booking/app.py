@@ -13,8 +13,10 @@ from agent_demos.demos.appointment_booking.config import Settings, get_settings
 from agent_demos.demos.appointment_booking.routes import appointments, calendar, health
 from agent_demos.demos.appointment_booking.services.chat_service import ChatService
 from agent_demos.demos.appointment_booking.services.notification import NotificationService
+from agent_demos.demos.appointment_booking.services.voice_service import VoiceService
 from agent_demos.demos.appointment_booking.websocket.chat import chat_router
 from agent_demos.demos.appointment_booking.websocket.manager import ConnectionManager
+from agent_demos.demos.appointment_booking.websocket.voice import voice_router
 
 if TYPE_CHECKING:
     from agent_demos.scheduling.agent import SchedulingAgent
@@ -29,6 +31,7 @@ class AppState:
         self.notification_service = NotificationService(self.connection_manager)
         self._scheduling_agent: SchedulingAgent | None = None
         self._chat_service: ChatService | None = None
+        self._voice_service: VoiceService | None = None
 
     @property
     def scheduling_agent(self) -> SchedulingAgent:
@@ -54,6 +57,17 @@ class AppState:
                 notification_service=self.notification_service,
             )
         return self._chat_service
+
+    @property
+    def voice_service(self) -> VoiceService:
+        """Lazy-initialize the voice service."""
+        if self._voice_service is None:
+            self._voice_service = VoiceService(
+                scheduling_agent=self.scheduling_agent,
+                notification_service=self.notification_service,
+                openai_api_key=self.settings.openai_api_key or None,
+            )
+        return self._voice_service
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -97,6 +111,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(appointments.router, prefix="/api", tags=["Appointments"])
     app.include_router(calendar.router, prefix="/api/calendar", tags=["Calendar"])
     app.include_router(chat_router, prefix="/ws", tags=["WebSocket"])
+    app.include_router(voice_router, prefix="/ws", tags=["WebSocket"])
 
     return app
 
