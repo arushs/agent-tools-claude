@@ -1,0 +1,35 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* FullCalendar customizations */
+.fc {
+  @apply h-full;
+}
+
+.fc-event {
+  @apply cursor-pointer;
+}
+
+.fc-toolbar-title {
+  @apply text-lg font-semibold;
+}
+
+/* Chat panel styling */
+.chat-messages {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+
+.chat-messages::-webkit-scrollbar {
+  width: 6px;
+}
+
+.chat-messages::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.chat-messages::-webkit-scrollbar-thumb {
+  background-color: #cbd5e1;
+  border-radius: 3px;
+}
