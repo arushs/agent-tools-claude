@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { Appointment } from '../types'
+import { isApiError, getUserFriendlyErrorMessage } from '../types'
 
 export const useAppointmentsStore = defineStore('appointments', () => {
   const appointments = ref<Appointment[]>([])
@@ -26,12 +27,24 @@ export const useAppointmentsStore = defineStore('appointments', () => {
 
     try {
       const response = await fetch('/api/appointments')
+      const data = await response.json()
+
       if (!response.ok) {
-        throw new Error('Failed to fetch appointments')
+        if (isApiError(data)) {
+          error.value = getUserFriendlyErrorMessage(data)
+        } else {
+          error.value = `Failed to fetch appointments (${response.status})`
+        }
+        return
       }
-      appointments.value = await response.json()
+
+      appointments.value = data
     } catch (e) {
-      error.value = e instanceof Error ? e.message : 'Unknown error'
+      if (e instanceof TypeError && e.message.includes('fetch')) {
+        error.value = 'Unable to connect to server. Please check your connection.'
+      } else {
+        error.value = e instanceof Error ? e.message : 'Unknown error'
+      }
     } finally {
       loading.value = false
     }
@@ -48,15 +61,27 @@ export const useAppointmentsStore = defineStore('appointments', () => {
         body: JSON.stringify(appointment),
       })
 
+      const data = await response.json()
+
       if (!response.ok) {
-        throw new Error('Failed to create appointment')
+        if (isApiError(data)) {
+          error.value = getUserFriendlyErrorMessage(data)
+        } else {
+          error.value = `Failed to create appointment (${response.status})`
+        }
+        throw new Error(error.value)
       }
 
-      const created = await response.json()
-      appointments.value.push(created)
-      return created
+      appointments.value.push(data)
+      return data
     } catch (e) {
-      error.value = e instanceof Error ? e.message : 'Unknown error'
+      if (!error.value) {
+        if (e instanceof TypeError && e.message.includes('fetch')) {
+          error.value = 'Unable to connect to server. Please check your connection.'
+        } else {
+          error.value = e instanceof Error ? e.message : 'Unknown error'
+        }
+      }
       throw e
     } finally {
       loading.value = false
@@ -72,13 +97,31 @@ export const useAppointmentsStore = defineStore('appointments', () => {
         method: 'DELETE',
       })
 
+      // DELETE returns 204 No Content on success
       if (!response.ok) {
-        throw new Error('Failed to delete appointment')
+        // Try to parse error response
+        try {
+          const data = await response.json()
+          if (isApiError(data)) {
+            error.value = getUserFriendlyErrorMessage(data)
+          } else {
+            error.value = `Failed to delete appointment (${response.status})`
+          }
+        } catch {
+          error.value = `Failed to delete appointment (${response.status})`
+        }
+        throw new Error(error.value)
       }
 
       appointments.value = appointments.value.filter((apt) => apt.id !== id)
     } catch (e) {
-      error.value = e instanceof Error ? e.message : 'Unknown error'
+      if (!error.value) {
+        if (e instanceof TypeError && e.message.includes('fetch')) {
+          error.value = 'Unable to connect to server. Please check your connection.'
+        } else {
+          error.value = e instanceof Error ? e.message : 'Unknown error'
+        }
+      }
       throw e
     } finally {
       loading.value = false

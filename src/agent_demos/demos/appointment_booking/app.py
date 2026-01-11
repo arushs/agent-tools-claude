@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 logger = logging.getLogger(__name__)
 
 from agent_demos.demos.appointment_booking.config import Settings, get_settings
+from agent_demos.demos.appointment_booking.error_handlers import register_error_handlers
 from agent_demos.demos.appointment_booking.rate_limit import (
     RateLimitConfig,
     RateLimiter,
@@ -173,6 +174,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         RateLimitMiddleware,
         rate_limiter=rate_limiter,
     )
+
+    # Register error handlers
+    register_error_handlers(app)
 
     # Include routers
     app.include_router(health.router, tags=["Health"])

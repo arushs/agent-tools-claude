@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 
+from agent_demos.core.exceptions import (
+    CalendarAPIError,
+    NotFoundError,
+)
 from agent_demos.demos.appointment_booking.models import (
     Appointment,
     AppointmentCreate,
@@ -15,6 +20,7 @@ from agent_demos.demos.appointment_booking.models import (
 if TYPE_CHECKING:
     from agent_demos.demos.appointment_booking.app import AppState
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -66,7 +72,11 @@ async def list_appointments(
             for event in events
         ]
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        logger.exception("Failed to list appointments")
+        raise CalendarAPIError(
+            message="Failed to retrieve appointments from calendar",
+            api_error=str(e),
+        ) from e
 
 
 @router.post("/appointments", response_model=Appointment, status_code=201)
@@ -112,7 +122,12 @@ async def create_appointment(
 
         return created_appointment
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        logger.exception("Failed to create appointment: %s", appointment.title)
+        raise CalendarAPIError(
+            message="Failed to create appointment",
+            api_error=str(e),
+            details={"title": appointment.title},
+        ) from e
 
 
 @router.get("/appointments/{appointment_id}", response_model=Appointment)
@@ -134,7 +149,10 @@ async def get_appointment(
     try:
         event = app_state.scheduling_agent.calendar.get_event(appointment_id)
         if event is None:
-            raise HTTPException(status_code=404, detail="Appointment not found")
+            raise NotFoundError(
+                resource_type="Appointment",
+                resource_id=appointment_id,
+            )
 
         return Appointment(
             id=event.id,
@@ -143,10 +161,15 @@ async def get_appointment(
             end=event.end,
             attendees=event.attendees,
         )
-    except HTTPException:
+    except NotFoundError:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        logger.exception("Failed to get appointment: %s", appointment_id)
+        raise CalendarAPIError(
+            message="Failed to retrieve appointment",
+            api_error=str(e),
+            details={"appointment_id": appointment_id},
+        ) from e
 
 
 @router.delete("/appointments/{appointment_id}", status_code=204)
@@ -165,13 +188,21 @@ async def delete_appointment(
     try:
         success = app_state.scheduling_agent.calendar.cancel_event(appointment_id)
         if not success:
-            raise HTTPException(status_code=404, detail="Appointment not found")
+            raise NotFoundError(
+                resource_type="Appointment",
+                resource_id=appointment_id,
+            )
 
         # Broadcast notification
         await app_state.notification_service.broadcast_appointment_cancelled(
             {"id": appointment_id}
         )
-    except HTTPException:
+    except NotFoundError:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        logger.exception("Failed to delete appointment: %s", appointment_id)
+        raise CalendarAPIError(
+            message="Failed to delete appointment",
+            api_error=str(e),
+            details={"appointment_id": appointment_id},
+        ) from e

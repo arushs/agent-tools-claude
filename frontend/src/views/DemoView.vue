@@ -162,6 +162,7 @@ function goToAdmin() {
             </button>
           </div>
         </div>
+        </div>
       </div>
     </header>
 

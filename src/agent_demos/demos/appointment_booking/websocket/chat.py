@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
@@ -10,9 +11,14 @@ from agent_demos.demos.appointment_booking.websocket.auth import authenticate_we
 
 from agent_demos.demos.appointment_booking.rate_limit import check_ws_rate_limit
 
+from agent_demos.demos.appointment_booking.error_handlers import (
+    format_error_for_websocket,
+)
+
 if TYPE_CHECKING:
     from agent_demos.demos.appointment_booking.app import AppState
 
+logger = logging.getLogger(__name__)
 chat_router = APIRouter()
 
 
@@ -96,10 +102,11 @@ async def websocket_chat(
                     })
 
                 except Exception as e:
-                    await websocket.send_json({
-                        "type": "error",
-                        "message": f"Error processing message: {str(e)}",
-                    })
+                    logger.exception(
+                        "Error processing chat message for session %s",
+                        session_id,
+                    )
+                    await websocket.send_json(format_error_for_websocket(e))
 
             elif message_type == "clear_history":
                 app_state.chat_service.clear_history(session_id)
@@ -111,6 +118,12 @@ async def websocket_chat(
                 await websocket.send_json({"type": "pong"})
 
     except WebSocketDisconnect:
+        logger.debug("Chat WebSocket disconnected: session %s", session_id)
         manager.disconnect(session_id)
-    except Exception:
+    except Exception as e:
+        logger.exception(
+            "Unexpected error in chat WebSocket for session %s: %s",
+            session_id,
+            str(e),
+        )
         manager.disconnect(session_id)

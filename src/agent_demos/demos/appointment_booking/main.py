@@ -27,6 +27,11 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
 from agent_demos.core.claude_client import ToolDefinition
+from agent_demos.core.exceptions import (
+    CalendarAPIError,
+    ToolNotFoundError,
+    ToolValidationError,
+)
 from agent_demos.demos.appointment_booking.config import get_settings
 from agent_demos.voice.agent import VoiceAgent
 
@@ -292,67 +297,161 @@ class SchedulingToolExecutor:
         Returns:
             Tool execution result as a string.
         """
-        if tool_name == "check_calendar_availability":
-            return self._check_availability(tool_input)
-        elif tool_name == "create_calendar_event":
-            return self._create_event(tool_input)
-        elif tool_name == "get_todays_date":
-            return self._get_todays_date()
-        else:
-            return f"Unknown tool: {tool_name}"
+        try:
+            if tool_name == "check_calendar_availability":
+                return self._check_availability(tool_input)
+            elif tool_name == "create_calendar_event":
+                return self._create_event(tool_input)
+            elif tool_name == "get_todays_date":
+                return self._get_todays_date()
+            else:
+                error = ToolNotFoundError(tool_name=tool_name)
+                logger.warning("Unknown tool requested: %s", tool_name)
+                return json.dumps(error.to_dict())
+        except ToolValidationError as e:
+            logger.warning("Tool validation failed: %s", e.message)
+            return json.dumps(e.to_dict())
+        except CalendarAPIError as e:
+            logger.exception("Calendar API error in tool %s", tool_name)
+            return json.dumps(e.to_dict())
+        except Exception as e:
+            logger.exception("Unexpected error in tool %s", tool_name)
+            return json.dumps({
+                "error": "TOOL_ERROR",
+                "message": f"Unexpected error executing {tool_name}: {str(e)}",
+            })
 
     def _check_availability(self, params: dict[str, Any]) -> str:
         """Check calendar availability."""
+        # Validate required parameters
+        missing_params = []
+        if "date" not in params:
+            missing_params.append("date")
+        if "start_hour" not in params:
+            missing_params.append("start_hour")
+
+        if missing_params:
+            raise ToolValidationError(
+                tool_name="check_calendar_availability",
+                message=f"Missing required parameters: {', '.join(missing_params)}",
+                missing_params=missing_params,
+            )
+
+        date_str = params["date"]
+        start_hour = params["start_hour"]
+        start_minute = params.get("start_minute", 0)
+        duration_minutes = params.get("duration_minutes", 60)
+
+        # Validate parameter types and values
+        if not isinstance(start_hour, int) or not (0 <= start_hour <= 23):
+            raise ToolValidationError(
+                tool_name="check_calendar_availability",
+                message="start_hour must be an integer between 0 and 23",
+            )
+
+        if not isinstance(start_minute, int) or not (0 <= start_minute <= 59):
+            raise ToolValidationError(
+                tool_name="check_calendar_availability",
+                message="start_minute must be an integer between 0 and 59",
+            )
+
         try:
-            date_str = params["date"]
-            start_hour = params["start_hour"]
-            start_minute = params.get("start_minute", 0)
-            duration_minutes = params.get("duration_minutes", 60)
-
             date = datetime.strptime(date_str, "%Y-%m-%d")
-            start_time = date.replace(hour=start_hour, minute=start_minute)
-            end_time = start_time + timedelta(minutes=duration_minutes)
+        except ValueError as e:
+            raise ToolValidationError(
+                tool_name="check_calendar_availability",
+                message=f"Invalid date format. Expected YYYY-MM-DD, got: {date_str}",
+            ) from e
 
+        start_time = date.replace(hour=start_hour, minute=start_minute)
+        end_time = start_time + timedelta(minutes=duration_minutes)
+
+        try:
             events = check_availability(self.service, start_time, end_time)
-
-            if not events:
-                return json.dumps({
-                    "available": True,
-                    "message": f"The time slot from {start_time.strftime('%H:%M')} to {end_time.strftime('%H:%M')} on {date_str} is available.",
-                    "conflicting_events": [],
-                })
-            else:
-                conflicts = [
-                    {
-                        "title": e.get("summary", "Busy"),
-                        "start": e["start"].get("dateTime", e["start"].get("date")),
-                        "end": e["end"].get("dateTime", e["end"].get("date")),
-                    }
-                    for e in events
-                ]
-                return json.dumps({
-                    "available": False,
-                    "message": f"There are {len(events)} conflicting event(s) during this time.",
-                    "conflicting_events": conflicts,
-                })
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            raise CalendarAPIError(
+                message="Failed to check calendar availability",
+                api_error=str(e),
+            ) from e
+
+        if not events:
+            return json.dumps({
+                "available": True,
+                "message": f"The time slot from {start_time.strftime('%H:%M')} to {end_time.strftime('%H:%M')} on {date_str} is available.",
+                "conflicting_events": [],
+            })
+        else:
+            conflicts = [
+                {
+                    "title": e.get("summary", "Busy"),
+                    "start": e["start"].get("dateTime", e["start"].get("date")),
+                    "end": e["end"].get("dateTime", e["end"].get("date")),
+                }
+                for e in events
+            ]
+            return json.dumps({
+                "available": False,
+                "message": f"There are {len(events)} conflicting event(s) during this time.",
+                "conflicting_events": conflicts,
+            })
 
     def _create_event(self, params: dict[str, Any]) -> str:
         """Create a calendar event."""
+        # Validate required parameters
+        missing_params = []
+        if "title" not in params:
+            missing_params.append("title")
+        if "date" not in params:
+            missing_params.append("date")
+        if "start_hour" not in params:
+            missing_params.append("start_hour")
+
+        if missing_params:
+            raise ToolValidationError(
+                tool_name="create_calendar_event",
+                message=f"Missing required parameters: {', '.join(missing_params)}",
+                missing_params=missing_params,
+            )
+
+        title = params["title"]
+        date_str = params["date"]
+        start_hour = params["start_hour"]
+        start_minute = params.get("start_minute", 0)
+        duration_minutes = params.get("duration_minutes", 60)
+        description = params.get("description")
+        attendees = params.get("attendee_emails")
+
+        # Validate parameter types and values
+        if not isinstance(title, str) or not title.strip():
+            raise ToolValidationError(
+                tool_name="create_calendar_event",
+                message="title must be a non-empty string",
+            )
+
+        if not isinstance(start_hour, int) or not (0 <= start_hour <= 23):
+            raise ToolValidationError(
+                tool_name="create_calendar_event",
+                message="start_hour must be an integer between 0 and 23",
+            )
+
+        if not isinstance(start_minute, int) or not (0 <= start_minute <= 59):
+            raise ToolValidationError(
+                tool_name="create_calendar_event",
+                message="start_minute must be an integer between 0 and 59",
+            )
+
         try:
-            title = params["title"]
-            date_str = params["date"]
-            start_hour = params["start_hour"]
-            start_minute = params.get("start_minute", 0)
-            duration_minutes = params.get("duration_minutes", 60)
-            description = params.get("description")
-            attendees = params.get("attendee_emails")
-
             date = datetime.strptime(date_str, "%Y-%m-%d")
-            start_time = date.replace(hour=start_hour, minute=start_minute)
-            end_time = start_time + timedelta(minutes=duration_minutes)
+        except ValueError as e:
+            raise ToolValidationError(
+                tool_name="create_calendar_event",
+                message=f"Invalid date format. Expected YYYY-MM-DD, got: {date_str}",
+            ) from e
 
+        start_time = date.replace(hour=start_hour, minute=start_minute)
+        end_time = start_time + timedelta(minutes=duration_minutes)
+
+        try:
             event = create_event(
                 self.service,
                 summary=title,
@@ -361,17 +460,21 @@ class SchedulingToolExecutor:
                 description=description,
                 attendees=attendees,
             )
-
-            return json.dumps({
-                "success": True,
-                "message": f"Event '{title}' created successfully.",
-                "event_id": event.get("id"),
-                "event_link": event.get("htmlLink"),
-                "start": start_time.isoformat(),
-                "end": end_time.isoformat(),
-            })
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            raise CalendarAPIError(
+                message="Failed to create calendar event",
+                api_error=str(e),
+                details={"title": title},
+            ) from e
+
+        return json.dumps({
+            "success": True,
+            "message": f"Event '{title}' created successfully.",
+            "event_id": event.get("id"),
+            "event_link": event.get("htmlLink"),
+            "start": start_time.isoformat(),
+            "end": end_time.isoformat(),
+        })
 
     def _get_todays_date(self) -> str:
         """Get today's date and time."""

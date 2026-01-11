@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 
+from agent_demos.core.exceptions import CalendarAPIError
 from agent_demos.demos.appointment_booking.models import (
     AvailabilityResponse,
     TimeSlot,
@@ -15,6 +17,7 @@ from agent_demos.demos.appointment_booking.models import (
 if TYPE_CHECKING:
     from agent_demos.demos.appointment_booking.app import AppState
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -62,4 +65,8 @@ async def get_availability(
             total_slots=len(slots),
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        logger.exception("Failed to get calendar availability")
+        raise CalendarAPIError(
+            message="Failed to retrieve calendar availability",
+            api_error=str(e),
+        ) from e

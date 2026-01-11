@@ -2,7 +2,8 @@ import { ref, onUnmounted } from 'vue'
 import { useChatStore } from '../stores/chat'
 import { useAppointmentsStore } from '../stores/appointments'
 import { useDebugStore } from '../stores/debug'
-import type { WebSocketMessage, ChatMessage, Appointment } from '../types'
+import type { WebSocketMessage, ChatMessage, Appointment, ErrorMessage } from '../types'
+import { getUserFriendlyErrorMessage } from '../types'
 
 interface UseWebSocketOptions {
   enableDebug?: boolean
@@ -51,7 +52,7 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
       attemptReconnect()
     }
 
-    ws.value.onerror = (error) => {
+    ws.value.onerror = (_event) => {
       connected.value = false
       debugStore?.setConnectionState('disconnected')
       debugStore?.setLastError('WebSocket connection error')
@@ -98,10 +99,16 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
 
       case 'error':
         chatStore.setProcessing(false)
+        // Handle structured error messages from the new error handling system
+        const errorData = data as ErrorMessage
+        const errorMessage = errorData.error_code
+          ? getUserFriendlyErrorMessage(errorData)
+          : String(data.message || 'An error occurred')
         chatStore.addMessage({
           role: 'assistant',
-          content: `Error: ${data.message}`,
+          content: `Error: ${errorMessage}`,
         })
+        debugStore?.setLastError(errorMessage)
         break
 
       case 'notification':
