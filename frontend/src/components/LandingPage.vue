@@ -6,6 +6,10 @@ const router = useRouter()
 function startDemo() {
   router.push('/demo')
 }
+
+function goToAdmin() {
+  router.push('/admin')
+}
 </script>
 
 <template>
@@ -108,8 +112,15 @@ function startDemo() {
       </div>
 
       <!-- Footer -->
-      <div class="absolute bottom-6 text-slate-500 text-sm">
-        Built with Claude AI
+      <div class="absolute bottom-6 flex items-center gap-4 text-slate-500 text-sm">
+        <span>Built with Claude AI</span>
+        <span class="text-slate-600">|</span>
+        <button
+          @click="goToAdmin"
+          class="text-slate-500 hover:text-slate-300 transition-colors"
+        >
+          Admin
+        </button>
       </div>
     </div>
   </div>

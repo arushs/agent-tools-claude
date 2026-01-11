@@ -89,6 +89,10 @@ function handleClear() {
 function goBack() {
   router.push('/')
 }
+
+function goToAdmin() {
+  router.push('/admin')
+}
 </script>
 
 <template>
@@ -109,6 +113,13 @@ function goBack() {
             </button>
             <h1 class="text-2xl font-bold text-gray-900">AI Scheduling Assistant</h1>
             <span class="px-2 py-1 text-xs font-medium bg-blue-100 text-blue-700 rounded-full">Demo Mode</span>
+            <button
+              @click="goToAdmin"
+              class="px-2 py-1 text-xs font-medium text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
+              title="Admin Portal"
+            >
+              Admin
+            </button>
           </div>
           <div class="flex gap-2">
             <button
