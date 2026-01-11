@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# TypeScript build info
+*.tsbuildinfo
+
+# Playwright
+playwright-report/
+test-results/
+/blob-report/
+/playwright/.cache/
+
+# Editor
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
