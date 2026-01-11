@@ -41,6 +41,13 @@ class Settings(BaseSettings):
     # If empty, authentication is disabled (backwards compatible)
     websocket_auth_token: str = ""
 
+    # Rate limiting
+    rate_limit_enabled: bool = True
+    rate_limit_http_per_minute: int = 60
+    rate_limit_http_burst: int = 10
+    rate_limit_ws_per_minute: int = 30
+    rate_limit_ws_burst: int = 5
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

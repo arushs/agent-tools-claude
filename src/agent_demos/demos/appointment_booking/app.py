@@ -14,6 +14,11 @@ from fastapi.middleware.cors import CORSMiddleware
 logger = logging.getLogger(__name__)
 
 from agent_demos.demos.appointment_booking.config import Settings, get_settings
+from agent_demos.demos.appointment_booking.rate_limit import (
+    RateLimitConfig,
+    RateLimiter,
+    RateLimitMiddleware,
+)
 from agent_demos.demos.appointment_booking.routes import appointments, calendar, health
 from agent_demos.demos.appointment_booking.services.chat_service import ChatService
 from agent_demos.demos.appointment_booking.services.notification import NotificationService
@@ -59,10 +64,19 @@ def validate_startup_credentials(settings: Settings) -> None:
 class AppState:
     """Application state container for dependency injection."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, rate_limiter: RateLimiter | None = None) -> None:
         self.settings = settings
         self.connection_manager = ConnectionManager()
         self.notification_service = NotificationService(self.connection_manager)
+        self.rate_limiter = rate_limiter or RateLimiter(
+            RateLimitConfig(
+                http_requests_per_minute=settings.rate_limit_http_per_minute,
+                http_burst_limit=settings.rate_limit_http_burst,
+                ws_messages_per_minute=settings.rate_limit_ws_per_minute,
+                ws_burst_limit=settings.rate_limit_ws_burst,
+                enabled=settings.rate_limit_enabled,
+            )
+        )
         self._scheduling_agent: SchedulingAgent | None = None
         self._chat_service: ChatService | None = None
         self._voice_service: VoiceService | None = None
@@ -115,12 +129,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     """
     settings = settings or get_settings()
 
+    # Create rate limiter before app for middleware
+    rate_limiter = RateLimiter(
+        RateLimitConfig(
+            http_requests_per_minute=settings.rate_limit_http_per_minute,
+            http_burst_limit=settings.rate_limit_http_burst,
+            ws_messages_per_minute=settings.rate_limit_ws_per_minute,
+            ws_burst_limit=settings.rate_limit_ws_burst,
+            enabled=settings.rate_limit_enabled,
+        )
+    )
+
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         """Application lifespan manager."""
         # Startup: Validate credentials and initialize application state
         validate_startup_credentials(settings)
-        app.state.app_state = AppState(settings)
+        app.state.app_state = AppState(settings, rate_limiter)
         logger.info("Application started successfully")
         yield
         # Shutdown: Clean up resources
@@ -141,6 +166,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+    )
+
+    # Configure rate limiting
+    app.add_middleware(
+        RateLimitMiddleware,
+        rate_limiter=rate_limiter,
     )
 
     # Include routers
@@ -169,11 +200,6 @@ def get_app() -> FastAPI:
     if _default_app is None:
         _default_app = create_app()
     return _default_app
-
-
-# Alias for backwards compatibility with: uvicorn app:app
-# Will be created on first access when needed
-app: FastAPI = None  # type: ignore[assignment]
 
 
 def __getattr__(name: str) -> FastAPI:

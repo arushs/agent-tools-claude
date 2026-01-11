@@ -8,6 +8,8 @@ from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 
 from agent_demos.demos.appointment_booking.websocket.auth import authenticate_websocket
 
+from agent_demos.demos.appointment_booking.rate_limit import check_ws_rate_limit
+
 if TYPE_CHECKING:
     from agent_demos.demos.appointment_booking.app import AppState
 
@@ -83,14 +85,29 @@ async def websocket_voice(
             message_type = data.get("type", "")
 
             if message_type == "audio":
+                # Check rate limit for resource-intensive operations
+                if not await check_ws_rate_limit(
+                    websocket, app_state.rate_limiter, session_id
+                ):
+                    continue
                 # Full voice pipeline: audio -> transcription -> Claude -> synthesis
                 await _handle_audio_message(websocket, app_state, session_id, data)
 
             elif message_type == "transcribe":
+                # Check rate limit for resource-intensive operations
+                if not await check_ws_rate_limit(
+                    websocket, app_state.rate_limiter, session_id
+                ):
+                    continue
                 # Transcribe only (voice-to-text preview)
                 await _handle_transcribe_message(websocket, app_state, data)
 
             elif message_type == "synthesize":
+                # Check rate limit for resource-intensive operations
+                if not await check_ws_rate_limit(
+                    websocket, app_state.rate_limiter, session_id
+                ):
+                    continue
                 # Synthesize text to audio
                 await _handle_synthesize_message(websocket, app_state, data)
 

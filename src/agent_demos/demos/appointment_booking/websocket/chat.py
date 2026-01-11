@@ -8,6 +8,8 @@ from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 
 from agent_demos.demos.appointment_booking.websocket.auth import authenticate_websocket
 
+from agent_demos.demos.appointment_booking.rate_limit import check_ws_rate_limit
+
 if TYPE_CHECKING:
     from agent_demos.demos.appointment_booking.app import AppState
 
@@ -63,6 +65,12 @@ async def websocket_chat(
             message_type = data.get("type", "message")
 
             if message_type == "message":
+                # Check rate limit for messages
+                if not await check_ws_rate_limit(
+                    websocket, app_state.rate_limiter, session_id
+                ):
+                    continue
+
                 user_message = data.get("content", "").strip()
                 if not user_message:
                     continue
