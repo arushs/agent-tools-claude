@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
+
+from agent_demos.demos.appointment_booking.websocket.auth import authenticate_websocket
 
 if TYPE_CHECKING:
     from agent_demos.demos.appointment_booking.app import AppState
@@ -18,15 +20,24 @@ def get_app_state(websocket: WebSocket) -> AppState:
 
 
 @chat_router.websocket("/chat")
-async def websocket_chat(websocket: WebSocket, session_id: str | None = None) -> None:
+async def websocket_chat(
+    websocket: WebSocket,
+    session_id: str | None = Query(default=None),
+    token: str | None = Query(default=None),
+) -> None:
     """WebSocket endpoint for chat interactions.
 
     Args:
         websocket: The WebSocket connection.
         session_id: Optional session ID for reconnection.
+        token: Authentication token (required if websocket_auth_token is configured).
     """
     app_state = get_app_state(websocket)
     manager = app_state.connection_manager
+
+    # Authenticate before accepting connection
+    if not await authenticate_websocket(websocket, token, app_state):
+        return
 
     # Accept connection and get session ID
     session_id = await manager.connect(websocket, session_id)

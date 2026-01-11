@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     port: int = 8000
     cors_origins: list[str] = ["http://localhost:5173", "http://localhost:3000"]
 
+    # WebSocket authentication
+    # If set, clients must provide this token to connect to WebSocket endpoints
+    # If empty, authentication is disabled (backwards compatible)
+    websocket_auth_token: str = ""
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
