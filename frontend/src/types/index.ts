@@ -78,3 +78,13 @@ export interface VoiceAudioMessage extends WebSocketMessage {
   data: string
   mime_type: string
 }
+
+// Debug types
+export interface DebugMessage {
+  id: string
+  timestamp: string
+  direction: 'sent' | 'received'
+  type: string
+  data: unknown
+  rawData: string
+}

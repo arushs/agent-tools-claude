@@ -1,9 +1,16 @@
 import { ref, onUnmounted } from 'vue'
 import { useChatStore } from '../stores/chat'
 import { useAppointmentsStore } from '../stores/appointments'
+import { useDebugStore } from '../stores/debug'
 import type { WebSocketMessage, ChatMessage, Appointment } from '../types'
 
-export function useWebSocket() {
+interface UseWebSocketOptions {
+  enableDebug?: boolean
+}
+
+export function useWebSocket(options: UseWebSocketOptions = {}) {
+  const { enableDebug = false } = options
+
   const ws = ref<WebSocket | null>(null)
   const connected = ref(false)
   const reconnectAttempts = ref(0)
@@ -11,6 +18,7 @@ export function useWebSocket() {
 
   const chatStore = useChatStore()
   const appointmentsStore = useAppointmentsStore()
+  const debugStore = enableDebug ? useDebugStore() : null
 
   let reconnectTimeout: ReturnType<typeof setTimeout> | null = null
 
@@ -18,6 +26,8 @@ export function useWebSocket() {
     if (ws.value?.readyState === WebSocket.OPEN) {
       return
     }
+
+    debugStore?.setConnectionState('connecting')
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const host = window.location.host
@@ -31,23 +41,31 @@ export function useWebSocket() {
     ws.value.onopen = () => {
       connected.value = true
       reconnectAttempts.value = 0
+      debugStore?.setConnectionState('connected')
+      debugStore?.setReconnectAttempts(0)
     }
 
     ws.value.onclose = () => {
       connected.value = false
+      debugStore?.setConnectionState('disconnected')
       attemptReconnect()
     }
 
-    ws.value.onerror = () => {
+    ws.value.onerror = (error) => {
       connected.value = false
+      debugStore?.setConnectionState('disconnected')
+      debugStore?.setLastError('WebSocket connection error')
     }
 
     ws.value.onmessage = (event) => {
+      const rawData = event.data as string
       try {
-        const data: WebSocketMessage = JSON.parse(event.data)
+        const data: WebSocketMessage = JSON.parse(rawData)
+        debugStore?.addMessage('received', data.type, data, rawData)
         handleMessage(data)
       } catch {
         console.error('Failed to parse WebSocket message')
+        debugStore?.setLastError('Failed to parse WebSocket message')
       }
     }
   }
@@ -56,6 +74,7 @@ export function useWebSocket() {
     switch (data.type) {
       case 'connected':
         chatStore.setSessionId(data.session_id as string)
+        debugStore?.setSessionId(data.session_id as string)
         break
 
       case 'history':
@@ -121,22 +140,30 @@ export function useWebSocket() {
   function sendMessage(content: string) {
     if (ws.value?.readyState === WebSocket.OPEN) {
       chatStore.addMessage({ role: 'user', content })
-      ws.value.send(JSON.stringify({ type: 'message', content }))
+      const payload = { type: 'message', content }
+      const rawData = JSON.stringify(payload)
+      debugStore?.addMessage('sent', 'message', payload, rawData)
+      ws.value.send(rawData)
     }
   }
 
   function clearHistory() {
     if (ws.value?.readyState === WebSocket.OPEN) {
-      ws.value.send(JSON.stringify({ type: 'clear_history' }))
+      const payload = { type: 'clear_history' }
+      const rawData = JSON.stringify(payload)
+      debugStore?.addMessage('sent', 'clear_history', payload, rawData)
+      ws.value.send(rawData)
     }
   }
 
   function attemptReconnect() {
     if (reconnectAttempts.value >= maxReconnectAttempts) {
+      debugStore?.setLastError(`Max reconnection attempts (${maxReconnectAttempts}) reached`)
       return
     }
 
     reconnectAttempts.value++
+    debugStore?.setReconnectAttempts(reconnectAttempts.value)
     const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.value), 30000)
 
     reconnectTimeout = setTimeout(() => {

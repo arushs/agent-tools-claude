@@ -1,11 +1,21 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAppointmentsStore } from '../stores/appointments'
+import { useDebugStore } from '../stores/debug'
+import { useWebSocket } from '../composables/useWebSocket'
 import type { Appointment } from '../types'
 
 const router = useRouter()
 const appointmentsStore = useAppointmentsStore()
+const debugStore = useDebugStore()
+
+// Initialize WebSocket with debug enabled
+const { connected, connect, disconnect, sendMessage } = useWebSocket({ enableDebug: true })
+
+// Debug panel state
+const showDebugPanel = ref(false)
+const testMessage = ref('')
 
 const searchQuery = ref('')
 const statusFilter = ref<'all' | 'confirmed' | 'pending' | 'cancelled'>('all')
@@ -65,7 +75,38 @@ onMounted(() => {
   if (appointmentsStore.appointments.length === 0) {
     appointmentsStore.appointments = [...sampleAppointments]
   }
+  // Try to connect to WebSocket (will fail gracefully if backend not running)
+  connect()
 })
+
+onUnmounted(() => {
+  disconnect()
+  debugStore.reset()
+})
+
+function toggleDebugPanel() {
+  showDebugPanel.value = !showDebugPanel.value
+}
+
+function handleTestMessage() {
+  if (testMessage.value.trim() && connected.value) {
+    sendMessage(testMessage.value)
+    testMessage.value = ''
+  }
+}
+
+function clearDebugMessages() {
+  debugStore.clearMessages()
+}
+
+function formatTimestamp(timestamp: string) {
+  return new Date(timestamp).toLocaleTimeString('en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    fractionalSecondDigits: 3
+  })
+}
 
 const allAppointments = computed(() => {
   return appointmentsStore.appointments.length > 0
@@ -200,6 +241,21 @@ function updateStatus(id: string, status: 'confirmed' | 'pending' | 'cancelled')
               <p class="text-sm text-gray-500">Manage appointments and system settings</p>
             </div>
           </div>
+          <button
+            @click="toggleDebugPanel"
+            :class="[
+              'px-4 py-2 text-sm font-medium rounded-lg transition-colors flex items-center gap-2',
+              showDebugPanel
+                ? 'bg-amber-600 text-white hover:bg-amber-700'
+                : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+            ]"
+          >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+            </svg>
+            Debug
+            <span :class="['w-2 h-2 rounded-full', connected ? 'bg-green-400' : 'bg-red-400']"></span>
+          </button>
           <button
             @click="goToDemo"
             class="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2"
@@ -399,6 +455,99 @@ function updateStatus(id: string, status: 'confirmed' | 'pending' | 'cancelled')
         </div>
       </div>
     </main>
+
+    <!-- Debug Panel Sidebar -->
+    <div
+      v-if="showDebugPanel"
+      class="fixed right-0 top-0 h-full w-96 bg-gray-900 text-gray-100 shadow-2xl z-40 flex flex-col"
+    >
+      <div class="px-4 py-3 border-b border-gray-700 flex items-center justify-between">
+        <div>
+          <h3 class="font-semibold">WebSocket Debug</h3>
+          <p class="text-xs text-gray-400">
+            Session: {{ debugStore.sessionId || 'Not connected' }}
+          </p>
+        </div>
+        <div class="flex items-center gap-2">
+          <span :class="['px-2 py-1 text-xs rounded-full', {
+            'bg-green-600': debugStore.connectionState === 'connected',
+            'bg-yellow-600': debugStore.connectionState === 'connecting',
+            'bg-red-600': debugStore.connectionState === 'disconnected'
+          }]">
+            {{ debugStore.connectionState }}
+          </span>
+          <button @click="toggleDebugPanel" class="text-gray-400 hover:text-white">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Stats -->
+      <div class="px-4 py-2 border-b border-gray-700 flex gap-4 text-xs">
+        <span class="text-green-400">Sent: {{ debugStore.sentCount }}</span>
+        <span class="text-blue-400">Received: {{ debugStore.receivedCount }}</span>
+        <span v-if="debugStore.reconnectAttempts > 0" class="text-yellow-400">
+          Reconnects: {{ debugStore.reconnectAttempts }}
+        </span>
+      </div>
+
+      <!-- Error banner -->
+      <div v-if="debugStore.lastError" class="px-4 py-2 bg-red-900/50 text-red-300 text-xs">
+        {{ debugStore.lastError }}
+      </div>
+
+      <!-- Messages -->
+      <div class="flex-1 overflow-y-auto p-2 space-y-2 font-mono text-xs">
+        <div v-if="debugStore.messages.length === 0" class="text-center text-gray-500 py-8">
+          No messages yet
+        </div>
+        <div
+          v-for="msg in debugStore.messages"
+          :key="msg.id"
+          :class="[
+            'p-2 rounded',
+            msg.direction === 'sent' ? 'bg-green-900/30 border-l-2 border-green-500' : 'bg-blue-900/30 border-l-2 border-blue-500'
+          ]"
+        >
+          <div class="flex items-center justify-between mb-1">
+            <span :class="msg.direction === 'sent' ? 'text-green-400' : 'text-blue-400'">
+              {{ msg.direction === 'sent' ? '↑' : '↓' }} {{ msg.type }}
+            </span>
+            <span class="text-gray-500">{{ formatTimestamp(msg.timestamp) }}</span>
+          </div>
+          <pre class="text-gray-300 whitespace-pre-wrap break-all">{{ msg.rawData }}</pre>
+        </div>
+      </div>
+
+      <!-- Test input -->
+      <div class="p-3 border-t border-gray-700">
+        <div class="flex gap-2 mb-2">
+          <input
+            v-model="testMessage"
+            type="text"
+            placeholder="Send test message..."
+            class="flex-1 px-3 py-2 bg-gray-800 border border-gray-600 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+            :disabled="!connected"
+            @keydown.enter="handleTestMessage"
+          />
+          <button
+            @click="handleTestMessage"
+            :disabled="!connected"
+            class="px-3 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50"
+          >
+            Send
+          </button>
+        </div>
+        <button
+          @click="clearDebugMessages"
+          class="w-full px-3 py-1.5 bg-gray-700 text-gray-300 rounded text-xs hover:bg-gray-600"
+        >
+          Clear Messages
+        </button>
+      </div>
+    </div>
 
     <!-- Appointment Detail Modal -->
     <div
