@@ -572,10 +572,14 @@ def mock_app_state(
 @pytest.fixture
 def app(mock_app_state: AppState, test_settings: Settings) -> FastAPI:
     """Create a test FastAPI application with mocked dependencies."""
-    test_app = create_app(test_settings)
-    # Override the app state
-    test_app.state.app_state = mock_app_state
-    return test_app
+    # Patch validate_startup_credentials to skip file existence checks in tests
+    with patch(
+        "agent_demos.demos.appointment_booking.app.validate_startup_credentials"
+    ):
+        test_app = create_app(test_settings)
+        # Override the app state
+        test_app.state.app_state = mock_app_state
+        yield test_app
 
 
 @pytest.fixture

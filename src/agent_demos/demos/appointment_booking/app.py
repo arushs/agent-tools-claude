@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+logger = logging.getLogger(__name__)
 
 from agent_demos.demos.appointment_booking.config import Settings, get_settings
 from agent_demos.demos.appointment_booking.routes import appointments, calendar, health
@@ -20,6 +24,36 @@ from agent_demos.demos.appointment_booking.websocket.voice import voice_router
 
 if TYPE_CHECKING:
     from agent_demos.scheduling.agent import SchedulingAgent
+
+
+def validate_startup_credentials(settings: Settings) -> None:
+    """Validate all required credentials are present at startup.
+
+    Raises:
+        RuntimeError: If any required credentials are missing or invalid.
+    """
+    errors: list[str] = []
+
+    # Check API keys (already validated by Pydantic, but double-check here for clarity)
+    if not settings.anthropic_api_key:
+        errors.append("ANTHROPIC_API_KEY environment variable is required")
+    if not settings.openai_api_key:
+        errors.append("OPENAI_API_KEY environment variable is required")
+
+    # Check Google credentials file exists
+    credentials_path = Path(settings.google_credentials_path)
+    if not credentials_path.exists():
+        errors.append(
+            f"Google credentials file not found: {settings.google_credentials_path}. "
+            "Download from Google Cloud Console and save to this path."
+        )
+
+    if errors:
+        error_msg = "Startup validation failed:\n" + "\n".join(f"  - {e}" for e in errors)
+        logger.error(error_msg)
+        raise RuntimeError(error_msg)
+
+    logger.info("All required credentials validated successfully")
 
 
 class AppState:
@@ -84,11 +118,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         """Application lifespan manager."""
-        # Startup: Initialize application state
+        # Startup: Validate credentials and initialize application state
+        validate_startup_credentials(settings)
         app.state.app_state = AppState(settings)
+        logger.info("Application started successfully")
         yield
         # Shutdown: Clean up resources
         await app.state.app_state.connection_manager.disconnect_all()
+        logger.info("Application shutdown complete")
 
     app = FastAPI(
         title="Appointment Booking Demo",
@@ -117,4 +154,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
 
 # Default app instance for uvicorn
-app = create_app()
+# Uses lazy initialization to avoid import-time settings validation
+# This allows tests to import the module without having env vars set
+_default_app: FastAPI | None = None
+
+
+def get_app() -> FastAPI:
+    """Get the default FastAPI application instance (lazy initialization).
+
+    This function is used by uvicorn when running the server.
+    Usage: uvicorn agent_demos.demos.appointment_booking.app:get_app --factory
+    """
+    global _default_app
+    if _default_app is None:
+        _default_app = create_app()
+    return _default_app
+
+
+# Alias for backwards compatibility with: uvicorn app:app
+# Will be created on first access when needed
+app: FastAPI = None  # type: ignore[assignment]
+
+
+def __getattr__(name: str) -> FastAPI:
+    """Lazy initialization for module-level app attribute."""
+    if name == "app":
+        return get_app()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
