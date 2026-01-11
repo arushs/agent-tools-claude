@@ -15,7 +15,9 @@ Example interaction:
 from __future__ import annotations
 
 import json
+import logging
 import os
+import stat
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -25,24 +27,47 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
 from agent_demos.core.claude_client import ToolDefinition
+from agent_demos.demos.appointment_booking.config import get_settings
 from agent_demos.voice.agent import VoiceAgent
+
+logger = logging.getLogger(__name__)
 
 # Google Calendar API scopes
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 
-# Token file for storing OAuth credentials
-TOKEN_FILE = "token.json"
+
+def _check_token_permissions(token_path: str) -> None:
+    """Check if token file has secure permissions and warn if not.
+
+    Args:
+        token_path: Path to the token file.
+    """
+    try:
+        file_stat = os.stat(token_path)
+        mode = file_stat.st_mode
+        # Check if group or others have any permissions
+        if mode & (stat.S_IRWXG | stat.S_IRWXO):
+            logger.warning(
+                "Token file %s has insecure permissions (mode %o). "
+                "Consider setting permissions to 0600 for security.",
+                token_path,
+                stat.S_IMODE(mode),
+            )
+    except OSError:
+        pass  # File doesn't exist yet or other error
 
 
 def get_calendar_service():
     """Authenticate and return Google Calendar service.
 
     Uses OAuth 2.0 flow with credentials from GOOGLE_CREDENTIALS_PATH.
-    Stores refresh token in token.json for subsequent runs.
+    Stores refresh token in the path specified by config's google_token_path.
 
     Returns:
         Google Calendar API service instance.
     """
+    settings = get_settings()
+    token_path = settings.google_token_path
     creds = None
     credentials_path = os.environ.get("GOOGLE_CREDENTIALS_PATH")
 
@@ -53,8 +78,9 @@ def get_calendar_service():
         )
 
     # Load existing token if available
-    if os.path.exists(TOKEN_FILE):
-        creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+    if os.path.exists(token_path):
+        _check_token_permissions(token_path)
+        creds = Credentials.from_authorized_user_file(token_path, SCOPES)
 
     # Refresh or get new credentials if needed
     if not creds or not creds.valid:
@@ -63,9 +89,14 @@ def get_calendar_service():
         else:
             flow = InstalledAppFlow.from_client_secrets_file(credentials_path, SCOPES)
             creds = flow.run_local_server(port=0)
-        # Save credentials for future runs
-        with open(TOKEN_FILE, "w") as token:
-            token.write(creds.to_json())
+        # Save credentials with restrictive permissions (0600)
+        old_umask = os.umask(0o077)
+        try:
+            with open(token_path, "w") as token:
+                token.write(creds.to_json())
+            os.chmod(token_path, stat.S_IRUSR | stat.S_IWUSR)  # 0600
+        finally:
+            os.umask(old_umask)
 
     return build("calendar", "v3", credentials=creds)
 
