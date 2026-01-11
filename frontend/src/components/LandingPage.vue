@@ -1,7 +1,11 @@
 <script setup lang="ts">
-defineEmits<{
-  start: []
-}>()
+import { useRouter } from 'vue-router'
+
+const router = useRouter()
+
+function startDemo() {
+  router.push('/demo')
+}
 </script>
 
 <template>
@@ -54,7 +58,7 @@ defineEmits<{
 
       <!-- CTA Button -->
       <button
-        @click="$emit('start')"
+        @click="startDemo"
         class="group relative px-8 py-4 bg-gradient-to-r from-blue-500 to-indigo-600 text-white font-semibold text-lg rounded-xl shadow-xl shadow-blue-500/30 hover:shadow-blue-500/50 transition-all duration-300 hover:-translate-y-1"
       >
         <span class="relative z-10 flex items-center gap-2">
