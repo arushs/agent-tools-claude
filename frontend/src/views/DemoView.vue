@@ -4,8 +4,11 @@ import { useRouter } from 'vue-router'
 import { useAppointmentsStore } from '../stores/appointments'
 import { useChatStore } from '../stores/chat'
 import { useDemoMode } from '../composables/useDemoMode'
+import { useVoice } from '../composables/useVoice'
 import CalendarView from '../components/calendar/CalendarView.vue'
 import AppointmentList from '../components/list/AppointmentList.vue'
+import VoiceButton from '../components/voice/VoiceButton.vue'
+import AudioVisualizer from '../components/voice/AudioVisualizer.vue'
 import type { Appointment } from '../types'
 
 const router = useRouter()
@@ -13,8 +16,24 @@ const appointmentsStore = useAppointmentsStore()
 const chatStore = useChatStore()
 const { connected, enableDemoMode, sendMessage, clearHistory } = useDemoMode()
 
+// Voice input support
+const {
+  connected: voiceConnected,
+  voiceState,
+  lastTranscription,
+  errorMessage: voiceError,
+  canRecord,
+  isRecording,
+  connect: connectVoice,
+  disconnect: disconnectVoice,
+  startRecording,
+  stopRecording,
+  getAudioData,
+} = useVoice()
+
 const selectedAppointment = ref<Appointment | null>(null)
 const activeView = ref<'calendar' | 'list'>('calendar')
+const inputMode = ref<'text' | 'voice'>('text')
 const inputMessage = ref('')
 const messagesContainer = ref<HTMLElement | null>(null)
 
@@ -24,10 +43,13 @@ const isProcessing = computed(() => chatStore.isProcessing)
 // Enable demo mode when component mounts
 onMounted(() => {
   enableDemoMode()
+  // Try to connect voice (will fail gracefully if backend not running)
+  connectVoice()
 })
 
 // Cleanup when leaving
 onUnmounted(() => {
+  disconnectVoice()
   chatStore.clearMessages()
   appointmentsStore.appointments = []
 })
@@ -192,17 +214,50 @@ function goToAdmin() {
                 <span
                   :class="[
                     'w-2 h-2 rounded-full',
-                    connected ? 'bg-green-500' : 'bg-red-500'
+                    (inputMode === 'text' ? connected : voiceConnected) ? 'bg-green-500' : 'bg-red-500'
                   ]"
-                  :title="connected ? 'Connected' : 'Disconnected'"
+                  :title="(inputMode === 'text' ? connected : voiceConnected) ? 'Connected' : 'Disconnected'"
                 ></span>
               </div>
-              <button
-                class="text-sm text-gray-500 hover:text-gray-700 transition-colors"
-                @click="handleClear"
-              >
-                Clear
-              </button>
+              <div class="flex items-center gap-2">
+                <!-- Text/Voice mode toggle -->
+                <div class="flex rounded-lg bg-gray-100 p-0.5">
+                  <button
+                    :class="[
+                      'px-2 py-1 text-xs font-medium rounded-md transition-colors',
+                      inputMode === 'text'
+                        ? 'bg-white text-gray-900 shadow-sm'
+                        : 'text-gray-500 hover:text-gray-700'
+                    ]"
+                    @click="inputMode = 'text'"
+                    title="Text input"
+                  >
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                    </svg>
+                  </button>
+                  <button
+                    :class="[
+                      'px-2 py-1 text-xs font-medium rounded-md transition-colors',
+                      inputMode === 'voice'
+                        ? 'bg-white text-gray-900 shadow-sm'
+                        : 'text-gray-500 hover:text-gray-700'
+                    ]"
+                    @click="inputMode = 'voice'"
+                    title="Voice input"
+                  >
+                    <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M12 14c1.66 0 2.99-1.34 2.99-3L15 5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z" />
+                    </svg>
+                  </button>
+                </div>
+                <button
+                  class="text-sm text-gray-500 hover:text-gray-700 transition-colors"
+                  @click="handleClear"
+                >
+                  Clear
+                </button>
+              </div>
             </div>
 
             <!-- Messages -->
@@ -256,7 +311,8 @@ function goToAdmin() {
 
             <!-- Input area -->
             <div class="px-4 py-3 border-t border-gray-200">
-              <div class="flex gap-2">
+              <!-- Text input mode -->
+              <div v-if="inputMode === 'text'" class="flex gap-2">
                 <input
                   v-model="inputMessage"
                   type="text"
@@ -274,6 +330,45 @@ function goToAdmin() {
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
                   </svg>
                 </button>
+              </div>
+
+              <!-- Voice input mode -->
+              <div v-else class="flex flex-col items-center gap-3 py-2">
+                <!-- Audio visualizer -->
+                <AudioVisualizer
+                  :is-active="isRecording"
+                  :get-audio-data="getAudioData"
+                  :bar-count="24"
+                  class="w-full max-w-xs"
+                />
+
+                <!-- Voice button -->
+                <VoiceButton
+                  :voice-state="voiceState"
+                  :connected="voiceConnected"
+                  :can-record="canRecord"
+                  @start-recording="startRecording"
+                  @stop-recording="stopRecording"
+                />
+
+                <!-- Transcription preview -->
+                <div v-if="lastTranscription" class="w-full max-w-sm">
+                  <div class="bg-gray-50 rounded-lg px-3 py-2 text-sm">
+                    <span class="text-gray-500">You said: </span>
+                    <span class="text-gray-900">"{{ lastTranscription }}"</span>
+                  </div>
+                </div>
+
+                <!-- Voice error message -->
+                <div v-if="voiceError" class="text-sm text-red-600">
+                  {{ voiceError }}
+                </div>
+
+                <!-- Connection status when voice not connected -->
+                <div v-if="!voiceConnected" class="text-sm text-gray-500 text-center">
+                  <p>Voice requires backend connection.</p>
+                  <p class="text-xs mt-1">Text mode still works in demo mode.</p>
+                </div>
               </div>
             </div>
           </div>
