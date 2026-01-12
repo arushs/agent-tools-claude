@@ -4,23 +4,23 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import ValidationInfo, field_validator
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
-    # API Keys (required - no defaults, must be set via environment)
-    anthropic_api_key: str
-    openai_api_key: str
+    # API Keys
+    anthropic_api_key: str  # Required for Claude
+    openai_api_key: str = ""  # Optional - only needed for voice features (STT/TTS)
 
-    @field_validator("anthropic_api_key", "openai_api_key")
+    @field_validator("anthropic_api_key")
     @classmethod
-    def validate_api_key_not_empty(cls, v: str, info: ValidationInfo) -> str:
-        """Validate that API keys are not empty strings."""
+    def validate_anthropic_key_not_empty(cls, v: str) -> str:
+        """Validate that Anthropic API key is not empty."""
         if not v or not v.strip():
-            raise ValueError(f"{info.field_name} must be set and non-empty")
+            raise ValueError("anthropic_api_key must be set and non-empty")
         return v
 
     # Google Calendar

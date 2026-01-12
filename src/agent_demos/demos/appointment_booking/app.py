@@ -40,18 +40,20 @@ def validate_startup_credentials(settings: Settings) -> None:
     """
     errors: list[str] = []
 
-    # Check API keys (already validated by Pydantic, but double-check here for clarity)
+    # Check required API key
     if not settings.anthropic_api_key:
         errors.append("ANTHROPIC_API_KEY environment variable is required")
-    if not settings.openai_api_key:
-        errors.append("OPENAI_API_KEY environment variable is required")
 
-    # Check Google credentials file exists
+    # Warn if OpenAI key is missing (only needed for voice features)
+    if not settings.openai_api_key:
+        logger.warning("OPENAI_API_KEY not set - voice features (STT/TTS) will be disabled")
+
+    # Warn if Google credentials file is missing (needed for calendar features)
     credentials_path = Path(settings.google_credentials_path)
     if not credentials_path.exists():
-        errors.append(
-            f"Google credentials file not found: {settings.google_credentials_path}. "
-            "Download from Google Cloud Console and save to this path."
+        logger.warning(
+            "Google credentials file not found: %s - calendar features will be disabled",
+            settings.google_credentials_path,
         )
 
     if errors:

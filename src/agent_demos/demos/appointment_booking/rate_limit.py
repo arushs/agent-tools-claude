@@ -9,8 +9,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from fastapi import Request, WebSocket
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import JSONResponse, Response
+from starlette.responses import JSONResponse
 
 if TYPE_CHECKING:
     from starlette.types import ASGIApp
@@ -203,8 +202,11 @@ def get_ws_client_ip(websocket: WebSocket) -> str:
     return "unknown"
 
 
-class RateLimitMiddleware(BaseHTTPMiddleware):
-    """FastAPI middleware for HTTP rate limiting."""
+class RateLimitMiddleware:
+    """Pure ASGI middleware for HTTP rate limiting.
+
+    Note: Uses pure ASGI instead of BaseHTTPMiddleware to properly support WebSocket.
+    """
 
     def __init__(
         self,
@@ -221,47 +223,54 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             key_func: Function to extract rate limit key from request.
             exclude_paths: Paths to exclude from rate limiting.
         """
-        super().__init__(app)
+        self.app = app
         self.rate_limiter = rate_limiter
         self.key_func = key_func or get_client_ip
         self.exclude_paths = set(exclude_paths or ["/health", "/healthz", "/"])
 
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        """Process the request with rate limiting.
+    async def __call__(self, scope, receive, send) -> None:
+        """Process the request with rate limiting."""
+        # Pass through non-HTTP requests (including WebSocket)
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
 
-        Args:
-            request: The HTTP request.
-            call_next: The next middleware/handler.
+        request = Request(scope, receive, send)
 
-        Returns:
-            The response.
-        """
         # Skip rate limiting for excluded paths
         if request.url.path in self.exclude_paths:
-            return await call_next(request)
+            await self.app(scope, receive, send)
+            return
 
         # Skip rate limiting for WebSocket upgrade requests
         if request.headers.get("upgrade", "").lower() == "websocket":
-            return await call_next(request)
+            await self.app(scope, receive, send)
+            return
 
         key = self.key_func(request)
         allowed, retry_after = self.rate_limiter.check_http(key)
 
         if not allowed:
-            return JSONResponse(
+            response = JSONResponse(
                 status_code=429,
                 content={"detail": "Rate limit exceeded"},
                 headers={"Retry-After": str(int(retry_after) + 1)},
             )
+            await response(scope, receive, send)
+            return
 
-        response = await call_next(request)
+        # Add rate limit headers via send wrapper
+        async def send_wrapper(message):
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                headers.append((
+                    b"x-ratelimit-limit",
+                    str(self.rate_limiter.config.http_requests_per_minute).encode(),
+                ))
+                message["headers"] = headers
+            await send(message)
 
-        # Add rate limit headers
-        response.headers["X-RateLimit-Limit"] = str(
-            self.rate_limiter.config.http_requests_per_minute
-        )
-
-        return response
+        await self.app(scope, receive, send_wrapper)
 
 
 async def check_ws_rate_limit(
